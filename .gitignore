@@ -34,3 +34,5 @@
 # Personal
 /build/debug/
 /build/release/
+.vscode/
+/resources/images/
