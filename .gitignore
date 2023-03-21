@@ -32,7 +32,8 @@
 *.app
 
 # Personal
-/build/debug/
-/build/release/
+build/Debug/
+build/Release/
 .vscode/
-/resources/images/
+resources/images/
+.idea/
