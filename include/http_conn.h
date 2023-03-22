@@ -68,8 +68,8 @@ public:
         CLOSED_CONNECTION
     };
 
-    http_conn();
-    ~http_conn();
+    http_conn(){}
+    ~http_conn(){}
 
     void init(int sockfd, const sockaddr_in &addr); // 初始化连接
     void close();                                   // 关闭连接
@@ -77,8 +77,10 @@ public:
     bool read();                                    // 非阻塞读
     bool write();                                   // 非阻塞写
 
-private:
+// private:
+// public: // 测试临时改一下
     void init();                                    // 初始化其他信息
+
     HTTP_CODE process_read();                       // 解析请求
     HTTP_CODE parse_request_line(char* text);       // 解析第一行
     HTTP_CODE parse_header(char* text);             // 解析头部
@@ -125,8 +127,6 @@ private:
     int m_write_idx;                                // 写缓冲区中待发送字节数
     char* m_file_address;                           // 客户请求文件读取到内存中的起始位置
     struct stat m_file_stat;                        // 目标文件状态
-
-
     struct iovec m_iv[2];                           // 使用writev
     int m_iv_count;                                 // 需要写的数量
 };

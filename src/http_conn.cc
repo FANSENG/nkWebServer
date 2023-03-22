@@ -4,7 +4,7 @@
  * @Description: {To be filled in}
  * @Date: 2023-03-21 14:37:30
  * @LastEditors: fs1n
- * @LastEditTime: 2023-03-22 01:38:05
+ * @LastEditTime: 2023-03-22 17:32:32
  */
 #include "http_conn.h"
 
@@ -24,60 +24,60 @@ int http_conn::m_epollfd = -1;
 int http_conn::m_usercount = 0;
 
 /**
- * @brief 设置文件为非阻塞状态
- * @param {int} fd 文件标识符
- * @return 设置前文件状态标记
+ * @brief 设置 socket 为非阻塞状态
+ * @param {int} socketfd socket标识符
+ * @return 设置前 socket 状态标记
  */
-int setnonblocking(int filefd){
-    int old_flag = fcntl(filefd, F_GETFL);
+int setnonblocking(int socketfd){
+    int old_flag = fcntl(socketfd, F_GETFL);
     int new_flag = old_flag | O_NONBLOCK;
-    fcntl(filefd, new_flag);
+    fcntl(socketfd, new_flag);
     return old_flag;
 }
 
 /**
- * @brief 添加需要监听的文件到 epoll 中
+ * @brief 添加需要监听的 socket 添加到 epoll 中
  * @param {int} epollfd epoll标识符
- * @param {int} filefd 文件描述符
+ * @param {int} socketfd 文件描述符
  * @param {bool} one_shot 保证socket只被一个线程处理?
  */
-void addfd(int epollfd, int filefd, bool one_shot){
+void addfd(int epollfd, int socketfd, bool one_shot){
     epoll_event event;
-    event.data.fd = filefd;
+    event.data.fd = socketfd;
     event.events = EPOLLIN | EPOLLRDHUP;        // ?水平触发
     if(one_shot){
         event.events |= EPOLLONESHOT;
     }
-    epoll_ctl(epollfd, EPOLL_CTL_ADD, filefd, &event);
-    setnonblocking(filefd);
+    epoll_ctl(epollfd, EPOLL_CTL_ADD, socketfd, &event);
+    setnonblocking(socketfd);
 }
 
 /**
- * @brief 移除文件描述符
+ * @brief 移除 socket 描述符
  * @param {int} epollfd epoll标识符
- * @param {int} filefd 文件描述符
+ * @param {int} socketfd socket 描述符
  */
-void removefd(int epollfd, int filefd){
-    epoll_ctl(epollfd, EPOLL_CTL_DEL, filefd, 0);
-    close(filefd);
+void removefd(int epollfd, int socketfd){
+    epoll_ctl(epollfd, EPOLL_CTL_DEL, socketfd, 0);
+    close(socketfd);
 }
 
 /**
  * @brief 修改 socket 状态标记
  * @param {int} epollfd epoll标识符
- * @param {int} fd socked 标识符
+ * @param {int} socketfd socked 标识符
  * @param {int} ev 状态标记
  */
-void modfd(int epollfd, int fd, int ev){
+void modfd(int epollfd, int socketfd, int ev){
     epoll_event event;
-    event.data.fd = fd;
+    event.data.fd = socketfd;
     event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
-    epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &event);
+    epoll_ctl(epollfd, EPOLL_CTL_MOD, socketfd, &event);
 }
 
 /**
- * @brief 
- * @return {*}
+ * @brief 关闭 socket 连接
+ * @return None
  */
 void http_conn::close(){
     if(m_sockfd != -1){
@@ -88,10 +88,10 @@ void http_conn::close(){
 }
 
 /**
- * @brief 
- * @param {int} sockfd
- * @param {sockaddr_in} &addr
- * @return {*}
+ * @brief 初始化连接
+ * @param {int} sockfd socket连接标识符
+ * @param {sockaddr_in} &addr client 地址
+ * @return None
  */
 void http_conn::init(int sockfd, const sockaddr_in &addr){
     m_sockfd = sockfd;
@@ -107,8 +107,8 @@ void http_conn::init(int sockfd, const sockaddr_in &addr){
 }
 
 /**
- * @brief 
- * @return {*}
+ * @brief 初始化连接信息
+ * @return None
  */
 void http_conn::init(){
     m_check_state = CHECK_STATE::REQUESTLINE;
@@ -131,8 +131,8 @@ void http_conn::init(){
 }
 
 /**
- * @brief 
- * @return {*}
+ * @brief 循环读数据，直到 无数据 或 client 关闭连接
+ * @return None
  */
 bool http_conn::read(){
     if(m_read_idx >= READ_BUFFER_SIZE){
@@ -169,9 +169,9 @@ http_conn::HTTP_CODE http_conn::process_read(){
     while( 
         (m_check_state == CHECK_STATE::CONTENT) &&          // 处于解析请求体状态
         (line_status == LINE_STATUS::OK) ||                 // 在正常读取状态
-        ((line_status = parse_line()) == LINE_STATUS::OK)){ // 解析行正常状态
-            text = getline();
-            m_start_line = m_checked_idx;
+        ((line_status = parse_line()) == LINE_STATUS::OK)){ // 将要解析的行状态正常
+            text = getline();                               // 读入将要解析的行
+            m_start_line = m_checked_idx;                   // 将读取标置为下一行
 
             std::cout << "Read a http line: " << text << std::endl;
 
@@ -192,7 +192,7 @@ http_conn::HTTP_CODE http_conn::process_read(){
                 ret = parse_content(text);
                 if(ret == HTTP_CODE::BAD_REQUEST) return HTTP_CODE::BAD_REQUEST;
                 else if(ret == HTTP_CODE::GET_REQUEST) return do_request();
-                line_status = LINE_STATUS::OPEN;
+                line_status = LINE_STATUS::OPEN;        // 未读取完
                 break;
             }
             default:
@@ -207,30 +207,28 @@ http_conn::HTTP_CODE http_conn::process_read(){
  *          GET /index.html HTTP/1.1
  * @param {char*} text 首行
  * @return HTTP 状态
- * @test TODO
  */
 http_conn::HTTP_CODE http_conn::parse_request_line(char* text){
     // 解析 & 校验 Method
     char* itr = strpbrk(text, " ");
-    char* method;
-    int index = itr - text;
-    strncpy(method, text, index);
+    char* method = text;
+    *itr = '\0';
     if(!method) return HTTP_CODE::BAD_REQUEST;
-    method[index] = '\0'; // 末尾置为结束符
     if(strcasecmp(method, "GET") == 0) m_method = METHOD::GET;
     else return HTTP_CODE::BAD_REQUEST;
 
+    
     // 解析 URL
-    text = itr + 1;
-    itr = strpbrk(text, " ");
-    index = itr - text;
-    strncpy(m_url, text, index);
+    itr++;
+    m_url = itr;
+    itr = strpbrk(itr, " ");
+    *itr = '\0';
     if(!m_url) return HTTP_CODE::BAD_REQUEST;
-    m_url[index] = '\0';
 
+    
     // 解析 & 校验 HTTP Version
-    text = itr + 1;
-    strcpy(m_version, text);
+    itr++;
+    m_version = itr;
     if(strcasecmp(m_version, "HTTP/1.1") != 0) return HTTP_CODE::BAD_REQUEST;
 
     if(strncasecmp(m_url, "http://", 7) == 0){
@@ -238,6 +236,16 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char* text){
         m_url = strchr(m_url, '/');     // 跳转到第一个 '/' 后面，即略过 域名 or ip:port
     }
     m_check_state = CHECK_STATE::HEADER;
+    
+    /*
+    @test-block begin
+    {
+        std::cout << "Method: " << method << std::endl;
+        std::cout << "URL: " << m_url << std::endl;
+        std::cout << "Version: " << m_version << std::endl;
+    }
+    @test-block end
+    */
     return HTTP_CODE::NO_REQUEST;
 }
 
@@ -254,17 +262,17 @@ http_conn::HTTP_CODE http_conn::parse_header(char* text){
             return HTTP_CODE::NO_REQUEST;
         }
         return HTTP_CODE::GET_REQUEST;
-    }else if(strncasecmp(text, "Connection:", 11) != 0){
+    }else if(strncasecmp(text, "Connection:", 11) == 0){
         text += 11;
         text += strspn(text, " ");
         if(strcasecmp(text, "keep-alive") == 0){
             m_linger = true;
         }
-    }else if(strncasecmp(text, "Content-Length:", 15) != 0){
+    }else if(strncasecmp(text, "Content-Length:", 15) == 0){
         text += 15;
         text += strspn(text, " ");
         m_content_length = atol(text);
-    }else if(strncasecmp(text, "Host:", 5) != 0){
+    }else if(strncasecmp(text, "Host:", 5) == 0){
         text += 5;
         text += strspn(text, " ");
         m_host = text;
@@ -272,16 +280,25 @@ http_conn::HTTP_CODE http_conn::parse_header(char* text){
     else{
         std::cout << "unkown header: " << text << std::endl;
     }
+
+    // /*
+    // @test-block begin
+    // {
+    //     std::cout << "m_content_length: " << m_content_length << std::endl;
+    //     std::cout << "text: " << text << std::endl;
+    // }
+    // @test-block end
+    // */
     return HTTP_CODE::NO_REQUEST;
 }
 
 /**
- * @brief 
- * @param {char*} text
- * @return {*}
+ * @brief 解析请求体，这里只去判断是否完整读入
+ * @param {char*} text 完整请求体
+ * @return None
  */
 http_conn::HTTP_CODE http_conn::parse_content(char* text){
-    if(m_read_idx >= m_checked_idx + m_content_length){
+    if(m_read_idx >= (m_checked_idx + m_content_length)){
         text[m_content_length] = '\0';      // ?为什么要这样
         return HTTP_CODE::GET_REQUEST;
     }
@@ -289,9 +306,10 @@ http_conn::HTTP_CODE http_conn::parse_content(char* text){
 }
 
 /**
- * @brief 解析单独一行，行结束为 "\r\n" ?为什么要这样操作
+ * @brief 用于解析前的检查，行结束为 "\\r\\n"，检查这一行是否完整
+ *          即是否以 "\\r\\n" 结尾
  * @param {char*} text
- * @return {*}
+ * @return None
  * @test TODO
  */
 http_conn::LINE_STATUS http_conn::parse_line(){
@@ -313,8 +331,8 @@ http_conn::LINE_STATUS http_conn::parse_line(){
 }
 
 /**
- * @brief 
- * @return {*}
+ * @brief 读取请求的文件到内存中
+ * @return None
  */
 http_conn::HTTP_CODE http_conn::do_request(){
     strcpy(m_real_file, DOC_ROOT);
@@ -338,7 +356,7 @@ http_conn::HTTP_CODE http_conn::do_request(){
 
 /**
  * @brief 释放内存中读入的文件
- * @return {*}
+ * @return None
  */
 void http_conn::unmap(){
     if(m_file_address){
@@ -348,8 +366,8 @@ void http_conn::unmap(){
 }
 
 /**
- * @brief 
- * @return {*}
+ * @brief 发送响应的数据
+ * @return {bool} 发送是否成功
  */
 bool http_conn::write(){
     int tmp = 0;
@@ -364,8 +382,10 @@ bool http_conn::write(){
     }
 
     while(true){
-        tmp = writev(m_sockfd, m_iv, m_iv_count);
+        tmp = writev(m_sockfd, m_iv, m_iv_count);       // tmp : 写入TCP缓存的字节数
         if(tmp < 0){
+            // TCP写缓存满了
+            // 等待下一个 EPOLLOUT 事件
             if(errno == EAGAIN){
                 modfd(m_epollfd, m_sockfd, EPOLLOUT);
                 return true;
@@ -375,6 +395,8 @@ bool http_conn::write(){
         }
         bytes_have_send += tmp;
         bytes_ready_send -= tmp;
+
+        // 发送完成, 根据请求中的字段决定是否保持连接
         if(bytes_ready_send <= bytes_have_send){
             unmap();
             if(m_linger){
@@ -390,12 +412,12 @@ bool http_conn::write(){
 }
 
 /**
- * @brief 
- * @param {char*} format
- * @return {*}
+ * @brief 将响应数据写入写缓存中
+ * @param {char*} format 格式化字符串
+ * @param ... 需要填入字符串的数据
+ * @return {bool} 发送是否成功
  */
 bool http_conn::add_response(const char* format, ...){
-    if(m_write_idx >= WRITE_BUFFER_SIZE) return false;
     va_list arg_list;
     va_start(arg_list, format);
     int len = vsnprintf(m_write_buf + m_write_idx, WRITE_BUFFER_SIZE - m_write_idx - 1, format, arg_list);
@@ -406,19 +428,19 @@ bool http_conn::add_response(const char* format, ...){
 }
 
 /**
- * @brief 
- * @param {int} status
- * @param {char*} title
- * @return {*}
+ * @brief 写入状态行
+ * @param {int} status 状态码(404,200,500等)
+ * @param {char*} title 状态Title
+ * @return {bool} 发送是否成功
  */
 bool http_conn::add_status_line(int status, const char* title){
     return add_response("%s %d %s\r\n", "HTTP/1.1", status, title);
 }
 
 /**
- * @brief 
- * @param {int} content_len
- * @return {*}
+ * @brief 写入 header 到写缓存
+ * @param {int} content_len 
+ * @return {bool} 写入是否成功
  */
 bool http_conn::add_headers(int content_len){
     return  add_content_length(content_len)&&
@@ -428,92 +450,92 @@ bool http_conn::add_headers(int content_len){
 }
 
 /**
- * @brief 
+ * @brief 写入 content长度 到写缓存
  * @param {int} content_len
- * @return {*}
+ * @return {bool} 写入是否成功
  */
 bool http_conn::add_content_length(int content_len){
     return add_response("Content-Length: %d\r\n", content_len);
 }
 
 /**
- * @brief 
- * @return {*}
+ * @brief 写入 Content-type 到写缓存
+ * @return {bool} 写入是否成功
  */
 bool http_conn::add_content_type(){
     return add_response("Content-Type:%s\r\n", "text/html");
 }
 
 /**
- * @brief 
- * @return {*}
+ * @brief 写入 是否保持连接 到写缓存
+ * @return {bool} 写入是否成功
  */
 bool http_conn::add_linger(){
     return add_response("Connection: %s\r\n", ( m_linger == true ) ? "keep-alive" : "close");
 }
 
 /**
- * @brief 
- * @return {*}
+ * @brief 写入空行
+ * @return {bool} 写入是否成功
  */
 bool http_conn::add_blank_line(){
     return add_response("%s", "\r\n");
 }
 
 /**
- * @brief 
- * @param {char*} content
- * @return {*}
+ * @brief 写入 content 到写缓存
+ * @param {char*} content 数据内容
+ * @return {bool} 写入是否成功
  */
 bool http_conn::add_content(const char* content){
     return add_response("%s", content);
 }
 
 /**
- * @brief 
- * @param {HTTP_CODE} ret
- * @return {*}
+ * @brief 根据服务器处理请求的结果, 给出返回 Client 的内容
+ * @param {HTTP_CODE} ret HTTP_CODE http状态
+ * @return {bool} 返回请求是否成功
  * @todo 修改代码判 false 条件
  */
 bool http_conn::process_write(HTTP_CODE ret){
-    int tmp = m_write_idx;
     switch (ret)
     {
         case INTERNAL_ERROR:
-            add_status_line(500, ERROR_500_TITLE);
-            add_headers( strlen(ERROR_500_FORM));
-            if (!add_content( ERROR_500_FORM)){
-                m_write_idx = tmp;
+            if (!(  add_status_line(500, ERROR_500_TITLE) &&
+                    add_headers(strlen(ERROR_500_FORM)) &&
+                    add_content( ERROR_500_FORM)
+                )){
                 return false;
             }
             break;
         case BAD_REQUEST:
-            add_status_line(400, ERROR_400_TITLE);
-            add_headers(strlen(ERROR_400_FORM));
-            if (!add_content(ERROR_400_FORM)){
-                m_write_idx = tmp;
+            if (!(  add_status_line(400, ERROR_400_TITLE) &&
+                    add_headers(strlen(ERROR_400_FORM)) &&
+                    add_content(ERROR_400_FORM)
+                )){
                 return false;
             }
             break;
         case NO_RESOURCE:
-            add_status_line(404, ERROR_404_TITLE);
-            add_headers(strlen(ERROR_404_FORM));
-            if (!add_content(ERROR_404_FORM)){
-                m_write_idx = tmp;
+            if (!(  add_status_line(404, ERROR_404_TITLE) && 
+                    add_headers(strlen(ERROR_404_FORM)) &&
+                    add_content(ERROR_404_FORM) 
+                )){
                 return false;
             }
             break;
         case FORBIDDEN_REQUEST:
-            add_status_line(403, ERROR_403_TITLE);
-            add_headers(strlen(ERROR_403_FORM));
-            if (!add_content(ERROR_403_FORM)){
-                m_write_idx = tmp;
+            if (!(  add_status_line(403, ERROR_403_TITLE) &&
+                    add_headers(strlen(ERROR_403_FORM)) &&
+                    add_content(ERROR_403_FORM)
+                )){
                 return false;
             }
             break;
         case FILE_REQUEST:
-            add_status_line(200, OK_200_TITLE);
-            add_headers(m_file_stat.st_size);
+            if(!(   add_status_line(200, OK_200_TITLE) &&
+                    add_headers(m_file_stat.st_size)
+            )) return false;
             m_iv[ 0 ].iov_base = m_write_buf;
             m_iv[ 0 ].iov_len = m_write_idx;
             m_iv[ 1 ].iov_base = m_file_address;
@@ -531,7 +553,7 @@ bool http_conn::process_write(HTTP_CODE ret){
 }
 
 /**
- * @brief 
+ * @brief 由线程池workder调用,用于处理HTTP请求
  * @return {*}
  */
 void http_conn::process(){
