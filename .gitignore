@@ -35,6 +35,6 @@
 build/Debug/
 build/Release/
 .vscode/
-resources/images/
+#resources/images/
 .idea/
 test/build
