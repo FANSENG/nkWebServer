@@ -14,11 +14,11 @@
 #include <list>
 #include <cstdio>
 #include <exception>
+#include <iostream>
 
 template<typename T>
 class threadpool{
 public:
-    threadpool();
     /**
      * @brief 
      * @param {int} thread_number
@@ -26,6 +26,7 @@ public:
      * @return {*}
      */    
     threadpool(int thread_number, int max_requests);
+    threadpool();
     ~threadpool();
     bool append(T* request);
 private:
@@ -42,24 +43,18 @@ private:
 };
 
 template<typename T>
-threadpool<T>::threadpool(){
-    threadpool<T>::threadpool(8, 10000);
-}
-
-template<typename T>
 threadpool<T>::threadpool(int thread_number, int max_requests)
-: m_thread_number(thread_number), m_max_requests(max_requests), m_run(true), m_threads(nullptr){
+        : m_thread_number(thread_number), m_max_requests(max_requests), m_run(true), m_threads(nullptr){
     if(m_thread_number <= 0 || m_max_requests <=0){
         throw std::exception();
-    } 
-
+    }
     m_threads = new pthread_t[m_thread_number];
     if(!m_threads){
         throw std::exception();
     }
-
     for(int i = 0; i < m_thread_number; i++){
-        if(pthread_create(m_threads + i, nullptr, worker, nullptr) != 0){
+        std::cout << "Create Thread " << i + 1 << std::endl;
+        if(pthread_create(&m_threads[i], nullptr, worker, this) != 0){
             delete [] m_threads;
             throw std::exception();
         }
@@ -72,6 +67,11 @@ threadpool<T>::threadpool(int thread_number, int max_requests)
 }
 
 template<typename T>
+threadpool<T>::threadpool(){
+    threadpool(8, 10000);
+}
+
+template<typename T>
 threadpool<T>::~threadpool(){
     delete [] m_threads;    // 必须使用 [] 删除，否则会内存泄漏
     m_run = false;
@@ -80,7 +80,7 @@ threadpool<T>::~threadpool(){
 template<typename T>
 bool threadpool<T>::append(T* request){
     m_queuelocker.lock();
-    if(m_queuesem.size() >= m_max_requests){
+    if(m_workqueue.size() >= m_max_requests){
         m_queuelocker.unlock();
         return false;
     }

@@ -9,3 +9,6 @@ mkdir Release
 cd ../resources
 rm -rf images
 mkdir images
+
+rm -rf ../test/build
+mkdir ../test/build

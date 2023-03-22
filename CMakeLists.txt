@@ -6,11 +6,17 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # 设置 include Path
-include_directories(./include)
+include_directories(${CMAKE_SOURCE_DIR}/include)
 
 # 设置源文件(需要编译的文件) 目录
-aux_source_directory(./src DIR_SRCS)
+aux_source_directory(./src/ DIR_SRCS)
 
 add_executable(nkWebServer ${DIR_SRCS})
 
-# target_link_libraries(webserver pthread mysqlclient)
+target_include_directories( nkWebServer
+        PRIVATE ${PROJECT_SOURCE_DIR}/include
+)
+
+target_link_libraries(nkWebServer pthread)
+
+#target_link_libraries(webserver pthread mysqlclient)

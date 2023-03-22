@@ -39,7 +39,7 @@ int setnonblocking(int socketfd){
  * @brief 添加需要监听的 socket 添加到 epoll 中
  * @param {int} epollfd epoll标识符
  * @param {int} socketfd 文件描述符
- * @param {bool} one_shot 保证socket只被一个线程处理?
+ * @param {bool} one_shot 保证 socket 只被一个线程处理
  */
 void addfd(int epollfd, int socketfd, bool one_shot){
     epoll_event event;
