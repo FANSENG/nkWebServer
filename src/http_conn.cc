@@ -4,7 +4,7 @@
  * @Description: {To be filled in}
  * @Date: 2023-03-21 14:37:30
  * @LastEditors: fs1n
- * @LastEditTime: 2023-03-22 17:32:32
+ * @LastEditTime: 2023-03-24 12:37:55
  */
 #include "http_conn.h"
 
@@ -31,7 +31,7 @@ int http_conn::m_usercount = 0;
 int setnonblocking(int socketfd){
     int old_flag = fcntl(socketfd, F_GETFL);
     int new_flag = old_flag | O_NONBLOCK;
-    fcntl(socketfd, new_flag);
+    fcntl(socketfd, F_SETFL, new_flag);
     return old_flag;
 }
 
@@ -49,6 +49,7 @@ void addfd(int epollfd, int socketfd, bool one_shot){
         event.events |= EPOLLONESHOT;
     }
     epoll_ctl(epollfd, EPOLL_CTL_ADD, socketfd, &event);
+    // 设置 socket 为非阻塞，异步处理
     setnonblocking(socketfd);
 }
 
@@ -79,11 +80,11 @@ void modfd(int epollfd, int socketfd, int ev){
  * @brief 关闭 socket 连接
  * @return None
  */
-void http_conn::close(){
+void http_conn::close_conn(){
     if(m_sockfd != -1){
         removefd(m_epollfd, m_sockfd);
         m_sockfd = -1;
-        --m_usercount;
+        m_usercount--;
     }
 }
 
@@ -100,6 +101,7 @@ void http_conn::init(int sockfd, const sockaddr_in &addr){
     int reuse = 1;
     setsockopt(m_sockfd, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 
+    // !这里 addfd 应该是在 epoll 中添加 sockfd
     addfd(m_epollfd, m_sockfd, true);
     m_usercount++;
 
@@ -111,6 +113,9 @@ void http_conn::init(int sockfd, const sockaddr_in &addr){
  * @return None
  */
 void http_conn::init(){
+    bytes_to_send = 0;
+    bytes_have_send = 0;
+
     m_check_state = CHECK_STATE::REQUESTLINE;
 
     m_checked_idx = 0;
@@ -154,6 +159,7 @@ bool http_conn::read(){
         }
         m_read_idx += bytes_read;
     }
+    printf("get data: %s", m_read_buf);
     return true;
 }
 
@@ -162,6 +168,7 @@ bool http_conn::read(){
  * @return HTTP 请求状态码
  */
 http_conn::HTTP_CODE http_conn::process_read(){
+    std::cout << "begin process read" << std::endl;
     LINE_STATUS line_status = LINE_STATUS::OK;
     HTTP_CODE ret = HTTP_CODE::NO_REQUEST;
 
@@ -175,25 +182,24 @@ http_conn::HTTP_CODE http_conn::process_read(){
 
             std::cout << "Read a http line: " << text << std::endl;
 
-            switch (m_check_state)
-            {
-            case CHECK_STATE::REQUESTLINE:{
-                ret = parse_request_line(text);
-                if(ret == HTTP_CODE::BAD_REQUEST) return HTTP_CODE::BAD_REQUEST;
-                break;
-            }
-            case CHECK_STATE::HEADER:{
-                ret = parse_header(text);
-                if(ret == HTTP_CODE::BAD_REQUEST) return HTTP_CODE::BAD_REQUEST;
-                else if(ret == HTTP_CODE::GET_REQUEST) return do_request();         // 获取完整请求头，无 content
-                break;
-            }
-            case CHECK_STATE::CONTENT:{
-                ret = parse_content(text);
-                if(ret == HTTP_CODE::BAD_REQUEST) return HTTP_CODE::BAD_REQUEST;
-                else if(ret == HTTP_CODE::GET_REQUEST) return do_request();
-                line_status = LINE_STATUS::OPEN;        // 未读取完
-                break;
+            switch (m_check_state){
+                case CHECK_STATE::REQUESTLINE:{
+                    ret = parse_request_line(text);
+                    if(ret == HTTP_CODE::BAD_REQUEST) return HTTP_CODE::BAD_REQUEST;
+                    break;
+                }
+                case CHECK_STATE::HEADER:{
+                    ret = parse_header(text);
+                    if(ret == HTTP_CODE::BAD_REQUEST) return HTTP_CODE::BAD_REQUEST;
+                    else if(ret == HTTP_CODE::GET_REQUEST) return do_request();         // 获取完整请求头，无 content
+                    break;
+                }
+                case CHECK_STATE::CONTENT:{
+                    ret = parse_content(text);
+                    if(ret == HTTP_CODE::BAD_REQUEST) return HTTP_CODE::BAD_REQUEST;
+                    else if(ret == HTTP_CODE::GET_REQUEST) return do_request();
+                    line_status = LINE_STATUS::OPEN;        // 未读取完
+                    break;
             }
             default:
                 return HTTP_CODE::INTERNAL_ERROR;
@@ -209,6 +215,7 @@ http_conn::HTTP_CODE http_conn::process_read(){
  * @return HTTP 状态
  */
 http_conn::HTTP_CODE http_conn::parse_request_line(char* text){
+    std::cout << "parse request line: " << text << std::endl;
     // 解析 & 校验 Method
     char* itr = strpbrk(text, " ");
     char* method = text;
@@ -237,15 +244,15 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char* text){
     }
     m_check_state = CHECK_STATE::HEADER;
     
-    /*
-    @test-block begin
+    //// /*
+    // @test-block begin
     {
         std::cout << "Method: " << method << std::endl;
         std::cout << "URL: " << m_url << std::endl;
         std::cout << "Version: " << m_version << std::endl;
     }
-    @test-block end
-    */
+    // @test-block end
+    // */
     return HTTP_CODE::NO_REQUEST;
 }
 
@@ -256,6 +263,7 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char* text){
  * @test TODO
  */
 http_conn::HTTP_CODE http_conn::parse_header(char* text){
+    std::cout << "parse header: " << text << std::endl;
     if(text[0] == '\0'){
         if(m_content_length != 0){
             m_check_state = CHECK_STATE::CONTENT;
@@ -283,10 +291,10 @@ http_conn::HTTP_CODE http_conn::parse_header(char* text){
 
     // /*
     // @test-block begin
-    // {
-    //     std::cout << "m_content_length: " << m_content_length << std::endl;
-    //     std::cout << "text: " << text << std::endl;
-    // }
+    {
+        std::cout << "m_content_length: " << m_content_length << std::endl;
+        std::cout << "text: " << text << std::endl;
+    }
     // @test-block end
     // */
     return HTTP_CODE::NO_REQUEST;
@@ -298,6 +306,7 @@ http_conn::HTTP_CODE http_conn::parse_header(char* text){
  * @return None
  */
 http_conn::HTTP_CODE http_conn::parse_content(char* text){
+    std::cout << "parse content: " << text << std::endl;
     if(m_read_idx >= (m_checked_idx + m_content_length)){
         text[m_content_length] = '\0';      // ?为什么要这样
         return HTTP_CODE::GET_REQUEST;
@@ -313,6 +322,7 @@ http_conn::HTTP_CODE http_conn::parse_content(char* text){
  * @test TODO
  */
 http_conn::LINE_STATUS http_conn::parse_line(){
+    std::cout << "check parse line" << std::endl;
     while(m_checked_idx < m_read_idx){
         if(m_read_buf[m_checked_idx] == '\r'){
             if(m_checked_idx + 1 == m_read_idx){        // 回车后面还未读入，为 OPEN 状态
@@ -339,13 +349,24 @@ http_conn::HTTP_CODE http_conn::do_request(){
     int len = strlen(DOC_ROOT);
     strncpy(m_real_file + len, m_url, FILENAME_LEN - len - 1);      // -1 是给 '\0' 留空间
     
+    std::cout << "Get Flie: " << m_real_file <<std::endl;
+
     // 不存在文件
-    if(stat(m_real_file, &m_file_stat) < 0) return HTTP_CODE::NO_RESOURCE;
+    if(stat(m_real_file, &m_file_stat) < 0){
+        std::cout << "No Flie: " << m_real_file <<std::endl;
+        return HTTP_CODE::NO_RESOURCE;
+    }
 
     // 禁止访问
-    if(!(m_file_stat.st_mode & S_IROTH)) return HTTP_CODE::FORBIDDEN_REQUEST;
+    if(!(m_file_stat.st_mode & S_IROTH)){
+        std::cout << "Forbidan access: " << m_real_file <<std::endl;
+        return HTTP_CODE::FORBIDDEN_REQUEST;
+    }
 
-    if(S_ISDIR(m_file_stat.st_mode)) return HTTP_CODE::BAD_REQUEST;
+    if(S_ISDIR(m_file_stat.st_mode)){
+        std::cout << "Not a Flie: " << m_real_file <<std::endl;
+        return HTTP_CODE::BAD_REQUEST;
+    } 
 
     int fd = open(m_real_file, O_RDONLY);
     // 创建内存映射
@@ -463,7 +484,8 @@ bool http_conn::add_content_length(int content_len){
  * @return {bool} 写入是否成功
  */
 bool http_conn::add_content_type(){
-    return add_response("Content-Type:%s\r\n", "text/html");
+    char *format_file = strrchr(m_real_file, '.');
+    return add_response("Content-Type:%s\r\n", format_file == NULL ? "text/html" : (format_file + 1));
 }
 
 /**
@@ -567,7 +589,7 @@ void http_conn::process(){
     // 生成响应
     bool write_ret = process_write(read_ret);
     if(!write_ret){
-        close();
+        close_conn();
     }
     modfd(m_epollfd, m_sockfd, EPOLLOUT);
 }

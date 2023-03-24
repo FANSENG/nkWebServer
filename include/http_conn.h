@@ -30,8 +30,8 @@ class http_conn{
 public:
     static int m_epollfd;                       // 用一个 epoll 管理 socket
     static int m_usercount;                     // 用户数量
-    static const int READ_BUFFER_SIZE = 1 << 11;
-    static const int WRITE_BUFFER_SIZE = 1 << 10;
+    static const int READ_BUFFER_SIZE = 2048;
+    static const int WRITE_BUFFER_SIZE = 1024;
     static const int FILENAME_LEN = 200;        // 文件名最大长度
 
     enum METHOD{
@@ -72,12 +72,12 @@ public:
     ~http_conn(){}
 
     void init(int sockfd, const sockaddr_in &addr); // 初始化连接
-    void close();                                   // 关闭连接
+    void close_conn();                                   // 关闭连接
     void process();                                 // 处理 client 请求
     bool read();                                    // 非阻塞读
     bool write();                                   // 非阻塞写
 
-// private:
+private:
 // public: // 测试临时改一下
     void init();                                    // 初始化其他信息
 
@@ -86,7 +86,7 @@ public:
     HTTP_CODE parse_header(char* text);             // 解析头部
     HTTP_CODE parse_content(char* text);            // 解析body
     LINE_STATUS parse_line();                       // 解析单独一行
-    inline char* getline(){                         // 获取当前正在解析行的起始地址
+    char* getline(){                         // 获取当前正在解析行的起始地址
         return m_read_buf + m_start_line;
     }
     HTTP_CODE do_request();                         // 发送 request
@@ -94,19 +94,19 @@ public:
 
     bool process_write(HTTP_CODE ret);              //填充HTTP应答
     void unmap();
-    bool add_response( const char* format, ... );
-    bool add_content( const char* content );
+    bool add_response(const char* format, ...);
+    bool add_content(const char* content);
     bool add_content_type();
-    bool add_status_line( int status, const char* title );
-    bool add_headers( int content_length );
-    bool add_content_length( int content_length );
+    bool add_status_line(int status, const char* title);
+    bool add_headers(int content_length);
+    bool add_content_length(int content_length);
     bool add_linger();
     bool add_blank_line();
-private:
+// private:
     int m_sockfd;                                   // 用于连接的 sock
     sockaddr_in m_addr;                             // client 地址
     CHECK_STATE m_check_state;                      // 当前主机状态
-
+    METHOD m_method;                                // 请求method
 
     char m_read_buf[READ_BUFFER_SIZE];              // 读缓冲区
     int m_read_idx;                                 // 读指针，指向读入如最后一个字节的下标
@@ -117,7 +117,6 @@ private:
     char m_real_file[FILENAME_LEN];                 // 客户请求文件的绝对路径
     char* m_url;                                    // 解析得到的 url
     char* m_version;                                // 协议版本号(1.1)
-    METHOD m_method;                                // 请求method
     char* m_host;                                   // client端 host
     long m_content_length;                          // 请求总长度
     bool m_linger;                                  // ?是否 keep alive
@@ -129,6 +128,8 @@ private:
     struct stat m_file_stat;                        // 目标文件状态
     struct iovec m_iv[2];                           // 使用writev
     int m_iv_count;                                 // 需要写的数量
+    int bytes_to_send;
+    int bytes_have_send;
 };
 
 #endif // HTTP_COND_H

@@ -4,7 +4,7 @@
  * @Description: 包装互斥锁、条件变量和信号量
  * @Date: 2023-03-21 11:50:49
  * @LastEditors: fs1n
- * @LastEditTime: 2023-03-21 15:49:32
+ * @LastEditTime: 2023-03-24 13:05:12
  */
 #ifndef LOCKER_H
 #define LOCKER_H
@@ -35,7 +35,7 @@ public:
         return pthread_mutex_unlock(&m_mutex) == 0;
     }
 
-    pthread_mutex_t* get(){ return &m_mutex; };
+    pthread_mutex_t *get(){ return &m_mutex; };
 private:
     pthread_mutex_t m_mutex;
 };
@@ -58,7 +58,7 @@ public:
         return pthread_cond_wait(&m_cond, mutex) == 0;
     }
 
-    bool waitfor(pthread_mutex_t *mutex, struct timespec time){
+    bool timewait(pthread_mutex_t *mutex, struct timespec time){
         return pthread_cond_timedwait(&m_cond, mutex, &time) == 0;
     }
 
@@ -85,9 +85,10 @@ public:
     }
 
     ~sem(){
-        if(sem_destroy(&m_sem) != 0){
-            throw std::exception();
-        }
+        // if(sem_destroy(&m_sem) != 0){
+        //     throw std::exception();
+        // }
+        sem_destroy(&m_sem);
     }
 
     // 获取信号量，不足则等待

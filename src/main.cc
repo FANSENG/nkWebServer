@@ -61,10 +61,10 @@ extern void removefd(int epollfd, int fd);
 extern void modfd(int epollfd, int fd, int ev);
 
 int main(int argc, char* argv[]){
-    if(argc <= 1){
+    if(argc < 2){
         std::cout << "未输入正确参数，期望格式如下" << std::endl;
         printf("%s {port}\n", basename(argv[0]));
-        exit(-1);
+        return 1;
     }
 
     int port = atoi(argv[1]);
@@ -72,30 +72,31 @@ int main(int argc, char* argv[]){
     // SIGPIPE : 往 读端被关闭的管道 或者 socket连接中写数据
     // SIG_IGN : 忽略 SIGPIPE 的信号，本项目中用于忽略向 socket 连接中写数据
     addsig(SIGPIPE, SIG_IGN);
+    
     // 线程池
-    threadpool<http_conn> *pool = nullptr;
+    threadpool<http_conn> *pool = NULL;
     try{
         pool = new threadpool<http_conn>();
     }catch(...) {
-        exit(-1);
+        return 1;
     }
+    sleep(1);           // 增加了 sleep(1) 就能运行?
     // 保存所有 client 信息
     http_conn *users = new http_conn[MAX_FD];
 
     // 监听 socket 描述符
     int listenfd = socket(PF_INET, SOCK_STREAM, 0);
 
-    // 设置端口复用
-    int resue = 1;
-    setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &resue, sizeof(resue));
-
     // 绑定
     struct sockaddr_in address;
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(port);     // host to net short
-    bind(listenfd, (struct sockaddr*)&address, sizeof(address));
 
+    // 设置端口复用
+    int resue = 1;
+    setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &resue, sizeof(resue));
+    bind(listenfd, (struct sockaddr*) &address, sizeof(address));
     // 监听 {监听socket, 最大监听数目?}
     listen(listenfd, 5);
 
@@ -113,7 +114,8 @@ int main(int argc, char* argv[]){
         std::cout << "Waiting Connection..." << std::endl;
         int num = epoll_wait(epollfd, events, MAX_EVENT_NUMBER - 1, -1);
 
-        if(num < 0 && errno == EINTR){
+        // ! 这里有修改
+        if(num < 0 && errno != EINTR){
             std::cout << "EPOLL FAILURE" << std::endl;
             break;
         }
@@ -124,24 +126,34 @@ int main(int argc, char* argv[]){
             if(sockfd == listenfd){
                 struct sockaddr_in client_addr;
                 socklen_t client_addrlen = sizeof(client_addr);
+
                 int connfd = accept(listenfd, (struct sockaddr*)&client_addr, &client_addrlen);
+                if(connfd < 0){
+                    printf("Errno in : %d\n", errno);
+                    continue;
+                }
+                printf("Client socket fd is: %d\n", connfd);
                 if(http_conn::m_usercount >= MAX_FD){
+                    printf("The connection pool is full and the server is busy\n");
                     close(connfd);
                     continue;
                 }
                 users[connfd].init(connfd, client_addr);
             }else if(events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)){
-                users[sockfd].close();
+                users[sockfd].close_conn();
             }else if(events[i].events & EPOLLIN){
+                printf("发生读事件\n");
                 if(users[sockfd].read()){
                     // ?放入待处理队列
+                    printf("读事件进入待处理队列\n");
                     pool->append(users + sockfd);
                 }else{
-                    users[sockfd].close();
+                    users[sockfd].close_conn();
                 }
             }else if(events[i].events & EPOLLOUT){
+                printf("发生写事件\n");
                 if(!users[sockfd].write()){
-                    users[sockfd].close();
+                    users[sockfd].close_conn();
                 }
             }
         }
